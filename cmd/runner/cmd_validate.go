@@ -115,7 +115,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		if err := provider.CheckOrchardConnection(commandContext(cmd), ss); err != nil {
-			return fmt.Errorf("Orchard connectivity for scale set %q: %w", ss.ScaleSetName, err)
+			return fmt.Errorf("orchard connectivity for scale set %q: %w", ss.ScaleSetName, err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "  ✓ Orchard is reachable for scale set %q\n", ss.ScaleSetName)
 	}

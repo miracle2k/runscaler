@@ -51,7 +51,7 @@ type orchardLedger struct {
 
 func openOrchardLedger(dir, identity, controllerURL string) (*orchardLedger, error) {
 	if dir == "" {
-		return nil, errors.New("Orchard state directory is required")
+		return nil, errors.New("orchard state directory is required")
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, errors.New("create Orchard state directory failed")
@@ -71,20 +71,20 @@ func openOrchardLedger(dir, identity, controllerURL string) (*orchardLedger, err
 	switch {
 	case err == nil:
 		if json.Unmarshal(data, &l.data) != nil || l.data.Version != 1 || l.data.Identity != identity || l.data.Records == nil {
-			return nil, errors.New("Orchard ledger is invalid; restore its saved state before recovery")
+			return nil, errors.New("orchard ledger is invalid; restore its saved state before recovery")
 		}
 		if _, err := uuid.Parse(l.data.OwnerID); err != nil {
-			return nil, errors.New("Orchard ledger owner is invalid")
+			return nil, errors.New("orchard ledger owner is invalid")
 		}
 		l.ownerPrefix = orchardOwnerPrefix(l.data.OwnerID)
 		for id, r := range l.data.Records {
 			if id != r.VMName || r.Name == "" || r.VM.Name != id || id != l.prefix()+r.Name || r.VM.Password != "" {
-				return nil, errors.New("Orchard ledger has an invalid ownership record")
+				return nil, errors.New("orchard ledger has an invalid ownership record")
 			}
 		}
 		if l.data.ControllerURL != controllerURL {
 			if len(l.data.Records) != 0 {
-				return nil, errors.New("Orchard controller URL changed with owned records; restore the original endpoint before recovery")
+				return nil, errors.New("orchard controller URL changed with owned records; restore the original endpoint before recovery")
 			}
 			l.data.ControllerURL = controllerURL
 			if err := l.save(l.data); err != nil {

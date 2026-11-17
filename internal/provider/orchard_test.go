@@ -446,7 +446,7 @@ func TestOrchardExecUsesFixedCommandAndSecretStdin(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		defer conn.CloseNow()
+		defer func() { _ = conn.CloseNow() }()
 		_, raw, err := conn.Read(r.Context())
 		if err != nil {
 			t.Error(err)

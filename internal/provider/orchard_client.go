@@ -64,7 +64,7 @@ func (c *orchardHTTPClient) Check(ctx context.Context) error {
 		return err
 	}
 	if info.Version == "" && len(info.Capabilities) == 0 {
-		return errors.New("Orchard controller info response is invalid")
+		return errors.New("orchard controller info response is invalid")
 	}
 	return nil
 }
@@ -72,7 +72,7 @@ func (c *orchardHTTPClient) Check(ctx context.Context) error {
 type orchardHTTPError struct{ Status int }
 
 func (e *orchardHTTPError) Error() string {
-	return fmt.Sprintf("Orchard request failed: HTTP %d", e.Status)
+	return fmt.Sprintf("orchard request failed: HTTP %d", e.Status)
 }
 func orchardNotFound(err error) bool {
 	var e *orchardHTTPError
@@ -144,7 +144,7 @@ func orchardTransportError(ctx context.Context, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
-	return errors.New("Orchard transport failed")
+	return errors.New("orchard transport failed")
 }
 
 func (c *orchardHTTPClient) Create(ctx context.Context, vm orchardVM) error {
@@ -186,7 +186,7 @@ func (c *orchardHTTPClient) Exec(ctx context.Context, name, command string, inpu
 		}
 		return orchardStarterStatus{}, orchardTransportError(ctx, err)
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 	conn.SetReadLimit(512 << 10)
 	payload, err := json.Marshal(input)
 	if err != nil {
@@ -216,7 +216,7 @@ func (c *orchardHTTPClient) Exec(ctx context.Context, name, command string, inpu
 			_, _ = output.Write(frame.Data)
 		case "stderr": // Do not expose arbitrary stderr, which can contain secrets.
 		case "error":
-			return orchardStarterStatus{}, errors.New("Orchard guest exec failed")
+			return orchardStarterStatus{}, errors.New("orchard guest exec failed")
 		case "exit":
 			if frame.Exit == nil || frame.Exit.Code != 0 {
 				return orchardStarterStatus{}, errors.New("guest starter command failed")
