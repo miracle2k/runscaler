@@ -50,7 +50,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	for _, ss := range scaleSets {
 		if ss.IsTart() {
 			needsTart = true
-		} else {
+		} else if ss.IsDocker() {
 			needsDocker = true
 		}
 	}
@@ -110,11 +110,20 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if err := checkTartSoftnet(scaleSets, cmd.OutOrStdout()); err != nil {
 		return err
 	}
+	for _, ss := range scaleSets {
+		if !ss.IsOrchard() {
+			continue
+		}
+		if err := provider.CheckOrchardConnection(commandContext(cmd), ss); err != nil {
+			return fmt.Errorf("Orchard connectivity for scale set %q: %w", ss.ScaleSetName, err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "  ✓ Orchard is reachable for scale set %q\n", ss.ScaleSetName)
+	}
 
 	if needsDocker {
 		// Show shared volume status.
 		for _, ss := range scaleSets {
-			if !ss.IsTart() && ss.Docker.SharedVolume != "" {
+			if ss.IsDocker() && ss.Docker.SharedVolume != "" {
 				fmt.Printf("  ✓ scaleset %q shared volume enabled at %s\n", ss.ScaleSetName, ss.Docker.SharedVolume)
 			}
 		}

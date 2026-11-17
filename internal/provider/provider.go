@@ -22,6 +22,51 @@ type InstanceProvider interface {
 	Shutdown(ctx context.Context)
 }
 
+// PreparedInstanceProvider separates a queued resource request from runner
+// registration. RequestInstance returns promptly after recording/requesting the
+// resource; WaitPrepared may wait for shared capacity and guest readiness. The
+// controller generates a fresh JIT configuration only after that wait succeeds.
+//
+// An owned resource ID must also be returned on a partial RequestInstance error
+// so cleanup can retry. StartPreparedInstance may have started a runner even when
+// it returns an error; the controller deregisters before destroying that resource.
+// A non-empty startup ID must equal the requested ID.
+// All IDs use the same namespace as InstanceProvider.RemoveInstance.
+type PreparedInstanceProvider interface {
+	RequestInstance(ctx context.Context, name string) (instanceID string, err error)
+	WaitPrepared(ctx context.Context, instanceID string) error
+	StartPreparedInstance(ctx context.Context, name, instanceID, jitConfig string) (string, error)
+}
+
+// InstanceRegistrationRecorder durably records registration ownership without
+// storing the JIT secret. The requested intent is saved before the GitHub call,
+// including calls whose response might be lost. Removed is idempotent and is
+// recorded only once GitHub confirms deletion, completion proves it is gone,
+// or the controller proves that registration was never requested.
+type InstanceRegistrationRecorder interface {
+	RecordJITRequested(ctx context.Context, name, instanceID string) error
+	RecordJITRunner(ctx context.Context, name, instanceID string, runnerID int) error
+	RecordJITRemoved(ctx context.Context, name, instanceID string) error
+}
+
+// RecoveredInstance describes one durable resource/registration intent. A
+// removed guest may remain as a tombstone until its registration is reconciled.
+// LaunchAttempted means that a runner might hold work and must be deregistered
+// before the guest is removed. A provider validates its resource ownership and
+// remote identity before returning these records.
+type RecoveredInstance struct {
+	Name            string
+	InstanceID      string
+	RunnerID        int
+	JITRequested    bool
+	LaunchAttempted bool
+	InstanceRemoved bool
+}
+
+type InstanceRecovery interface {
+	RecoverInstances(ctx context.Context) ([]RecoveredInstance, error)
+}
+
 // InstancePreflight optionally rejects provisioning before GitHub creates a
 // JIT registration. Providers must recheck allocation constraints when used.
 type InstancePreflight interface {

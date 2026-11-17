@@ -1,0 +1,34 @@
+# Copy to a private configuration directory and supply environment values
+# through the service manager. See docs/orchard.md for the guest contract.
+url = "https://github.com/example/project"
+name = "macos-orchard"
+provider = "orchard"
+runner-image = "registry.example/macos-xcode:runner"
+min-runners = 0
+max-runners = 2
+health-address = "127.0.0.1"
+health-port = 8080
+registration-sweep-mode = "off"
+
+[github-app]
+client-id = "Iv1.example"
+installation-id = 123456
+private-key-env = "RUNNER_GITHUB_APP_KEY"
+
+[orchard]
+url = "http://127.0.0.1:6120"
+service-account = "ci-controller"
+token-env = "ORCHARD_TOKEN"
+state-dir = "/var/lib/runner/orchard"
+cpu = 4
+memory = 8192
+username = "runner"
+password-env = "ORCHARD_GUEST_PASSWORD"
+runner-dir = "/opt/actions-runner"
+starter-command = "/usr/local/libexec/runscaler-orchard-runner"
+poll-interval = "2s"
+ready-timeout = "5m"
+
+# These select compatible workers; they are not manager ownership tags.
+#[orchard.worker-labels]
+#platform = "macos"

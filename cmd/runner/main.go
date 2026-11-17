@@ -61,7 +61,7 @@ func init() {
 	flags.StringSlice("labels", nil, "Runner labels (comma-separated)")
 	flags.String("runner-group", config.DefaultRunnerGroup, "Runner group name")
 	flags.String("runner-image", config.DefaultRunnerImage, "Docker image for runners")
-	flags.String("provider", config.DefaultProvider, "Instance provider (docker or tart)")
+	flags.String("provider", config.DefaultProvider, "Instance provider (docker, tart or orchard)")
 
 	// Docker provider
 	flags.String("docker-socket", config.DefaultDockerSocket, "Path to Docker socket")
@@ -334,7 +334,7 @@ func runManager(ctx context.Context, cfg config.Config, drain <-chan struct{}) e
 	for _, ss := range scaleSets {
 		if ss.IsTart() {
 			needsTart = true
-		} else {
+		} else if ss.IsDocker() {
 			needsDocker = true
 		}
 	}
@@ -349,7 +349,7 @@ func runManager(ctx context.Context, cfg config.Config, drain <-chan struct{}) e
 	}()
 	if needsDocker {
 		for _, ss := range scaleSets {
-			if ss.IsTart() || dockerClients[ss.Docker.Socket] != nil {
+			if !ss.IsDocker() || dockerClients[ss.Docker.Socket] != nil {
 				continue
 			}
 			client, err := dockerclient.New(
@@ -404,7 +404,7 @@ func runManager(ctx context.Context, cfg config.Config, drain <-chan struct{}) e
 		for _, ss := range scaleSets {
 			if ss.IsTart() {
 				tartHomes = append(tartHomes, ss.Tart.Home)
-			} else if ss.Docker.WorkspaceRoot != "" {
+			} else if ss.IsDocker() && ss.Docker.WorkspaceRoot != "" {
 				workspaceRoots = append(workspaceRoots, ss.Docker.WorkspaceRoot)
 			}
 		}
@@ -678,7 +678,18 @@ func runScaleSetController(ctx context.Context, deps managerDeps, rt *scaleSetRu
 		controllerOpts = append(controllerOpts, controller.WithStartFailureNotifier(sweeper.Trigger))
 	}
 	s = controller.NewScaleSetController(scaleSet.ID, rt.config.MinRunners, rt.maxRunners, instanceProvider, scalesetClient, rt.logger, controllerOpts...)
-	defer s.Shutdown(context.WithoutCancel(ctx))
+	if err := s.Recover(ctx); err != nil {
+		s.Abort(context.WithoutCancel(ctx))
+		return fmt.Errorf("recover owned instances: %w", err)
+	}
+	defer func() {
+		select {
+		case <-deps.drain:
+			s.Shutdown(context.WithoutCancel(ctx))
+		default:
+			s.Abort(context.WithoutCancel(ctx))
+		}
+	}()
 	if sweeper != nil {
 		// Deferred after Shutdown, so it runs first: Shutdown removes
 		// instances without deregistering them, and no sweep may run
@@ -694,7 +705,7 @@ func runScaleSetController(ctx context.Context, deps managerDeps, rt *scaleSetRu
 	defer cancelListen()
 	go watchScaleSetDrain(listenCtx, deps.drain, deps.drainTimeout, s, cancelListen, rt.logger)
 
-	if rt.config.Docker.SharedVolume != "" {
+	if rt.config.IsDocker() && rt.config.Docker.SharedVolume != "" {
 		rt.logger.Info("Shared volume enabled",
 			slog.String("path", rt.config.Docker.SharedVolume),
 			slog.String("docker_daemon_mode", rt.config.DockerDaemonMode()),
@@ -837,7 +848,7 @@ func watchScaleSetDrain(listenCtx context.Context, drain <-chan struct{}, timeou
 func groupDockerScaleSets(scaleSets []config.ScaleSetConfig) map[string][]config.ScaleSetConfig {
 	grouped := make(map[string][]config.ScaleSetConfig)
 	for _, ss := range scaleSets {
-		if !ss.IsTart() {
+		if ss.IsDocker() {
 			grouped[ss.Docker.Socket] = append(grouped[ss.Docker.Socket], ss)
 		}
 	}

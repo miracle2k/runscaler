@@ -27,6 +27,7 @@ const (
 	reasonExited       = "exited"
 	reasonShutdown     = "shutdown"
 	reasonReadiness    = "readiness-failed"
+	reasonPreparation  = "preparation-ended"
 )
 
 // jobRef identifies the job a runner picked up, for the removal log line.
@@ -54,6 +55,10 @@ type managedInstance struct {
 	jit                  string
 	diagnosticsCollected bool
 	diagnosticReason     string
+	preparationCancel    context.CancelFunc
+	preparationInFlight  bool
+	launchAttempted      bool
+	registrationClear    bool
 }
 
 // removedInstance is what finishRemoval hands back: the lease to
@@ -84,6 +89,87 @@ func (r *instanceState) reserve(name string, lease *capacity.Lease) bool {
 	}
 	r.instances[name] = &managedInstance{phase: instanceProvisioning, lease: lease}
 	return true
+}
+
+func (r *instanceState) reservePrepared(name string, lease *capacity.Lease, cancel context.CancelFunc, attempt startAttempt) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.instances[name]; exists {
+		return false
+	}
+	r.instances[name] = &managedInstance{
+		phase: instanceProvisioning, lease: lease, attempt: attempt,
+		preparationCancel: cancel, preparationInFlight: true,
+	}
+	return true
+}
+
+// cancelPreparingAboveTarget keeps the oldest preparations in the queue. A
+// launch that may already hold a GitHub job is left to normal deregistration.
+func (r *instanceState) cancelPreparingAboveTarget(target int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := 0
+	for _, i := range r.instances {
+		if i.phase != instanceRemoving {
+			current++
+		}
+	}
+	for current > target {
+		var newest *managedInstance
+		for _, i := range r.instances {
+			if i.phase == instanceProvisioning && i.preparationCancel != nil &&
+				(newest == nil || i.attempt.id > newest.attempt.id) {
+				newest = i
+			}
+		}
+		if newest == nil {
+			return
+		}
+		newest.phase = instanceRemoving
+		newest.removeReason = reasonPreparation
+		newest.preparationCancel()
+		current--
+	}
+}
+
+func (r *instanceState) setPreparedResource(name, id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	i := r.instances[name]
+	if i == nil {
+		return false
+	}
+	i.id = id
+	return true
+}
+
+func (r *instanceState) preparationCurrent(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	i := r.instances[name]
+	return i != nil && i.phase == instanceProvisioning && i.preparationCancel != nil
+}
+
+func (r *instanceState) beginPreparedLaunch(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	i := r.instances[name]
+	if i == nil || i.phase != instanceProvisioning || i.preparationCancel == nil {
+		return false
+	}
+	i.preparationCancel = nil
+	i.launchAttempted = true
+	return true
+}
+
+func (r *instanceState) finishPreparation(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i := r.instances[name]; i != nil {
+		i.preparationInFlight = false
+		i.preparationCancel = nil
+	}
 }
 
 // hasName reports whether name is tracked in any phase.
@@ -305,7 +391,8 @@ func (r *instanceState) markBusy(name string, job jobRef) bool {
 // (scale-down or drain), as opposed to one whose job finished.
 func isUnassignedRemoval(instance *managedInstance) bool {
 	return instance.phase == instanceRemoving &&
-		(instance.removeReason == reasonScaledDown || instance.removeReason == reasonDrain || instance.removeReason == reasonReadiness)
+		(instance.removeReason == reasonScaledDown || instance.removeReason == reasonDrain || instance.removeReason == reasonReadiness ||
+			(instance.removeReason == reasonExited && instance.launchAttempted && !instance.registrationClear))
 }
 
 // deregistration returns the GitHub runner ID to deregister before the
@@ -315,10 +402,74 @@ func (r *instanceState) deregistration(name, instanceID string) (runnerID int, n
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	instance, ok := r.instances[name]
-	if !ok || instance.id != instanceID || !isUnassignedRemoval(instance) {
+	if !ok || instance.id != instanceID || instance.registrationClear || !isUnassignedRemoval(instance) {
 		return 0, false
 	}
 	return instance.runnerID, true
+}
+
+func (r *instanceState) markLaunched(name, id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i := r.instances[name]; i != nil && i.id == id {
+		i.launchAttempted = true
+	}
+}
+
+func (r *instanceState) registrationCleared(name, id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	i := r.instances[name]
+	return i != nil && i.id == id && i.registrationClear
+}
+
+func (r *instanceState) markRegistrationCleared(name, id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i := r.instances[name]; i != nil && i.id == id {
+		i.registrationClear = true
+	}
+}
+
+func (r *instanceState) runnerID(name, instanceID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i := r.instances[name]; i != nil && i.id == instanceID {
+		return i.runnerID
+	}
+	return 0
+}
+
+func (r *instanceState) setRunnerID(name, instanceID string, runnerID int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i := r.instances[name]; i != nil && i.id == instanceID {
+		i.runnerID = runnerID
+	}
+}
+
+func (r *instanceState) removalReason(name, instanceID string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i := r.instances[name]; i != nil && i.id == instanceID {
+		return i.removeReason
+	}
+	return ""
+}
+
+func (r *instanceState) clearRegistrationOnRemoval(name, instanceID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	i := r.instances[name]
+	return i != nil && i.id == instanceID && (i.registrationClear || i.removeReason == reasonJobCompleted)
+}
+
+func (r *instanceState) markRegistrationUnrequested(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if i := r.instances[name]; i != nil {
+		i.registrationClear = true
+	}
 }
 
 // restoreBusy cancels the removal of a runner GitHub refused to deregister
@@ -402,6 +553,9 @@ func (r *instanceState) idleForRemoval() map[string]string {
 			instance.phase = instanceRemoving
 			instance.removeReason = reasonDrain
 			result[name] = instance.id
+			if instance.preparationCancel != nil {
+				instance.preparationCancel()
+			}
 		}
 	}
 	return result
@@ -414,7 +568,7 @@ func (r *instanceState) claimRemoval(now time.Time) (name, instanceID string, ok
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for name, instance := range r.instances {
-		if instance.phase == instanceRemoving && instance.id != "" && !instance.cleanupInFlight && !now.Before(instance.cleanupRetryAt) {
+		if instance.phase == instanceRemoving && instance.id != "" && !instance.preparationInFlight && !instance.cleanupInFlight && !now.Before(instance.cleanupRetryAt) {
 			instance.cleanupInFlight = true
 			return name, instance.id, true
 		}
@@ -466,5 +620,15 @@ func (r *instanceState) detachAll() map[string]managedInstance {
 		result[name] = *instance
 	}
 	clear(r.instances)
+	return result
+}
+
+func (r *instanceState) identities() map[string]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make(map[string]string, len(r.instances))
+	for name, i := range r.instances {
+		result[name] = i.id
+	}
 	return result
 }

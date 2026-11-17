@@ -20,7 +20,8 @@ health-port = 8080
 # A key set in a [[scaleset]] always wins, even with a zero/empty value:
 # e.g. `memory = 0` (unlimited) or `shared-volume = ""` override the default.
 
-# Instance provider: "docker" (Linux containers) or "tart" (macOS VMs)
+# Instance provider: "docker", "tart", or "orchard" (shared admission).
+# See config.orchard.example.toml for the separate Orchard guest contract.
 provider = "docker"
 
 # Default runner image and group
