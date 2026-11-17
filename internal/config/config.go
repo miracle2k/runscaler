@@ -108,6 +108,10 @@ type ScaleSetConfig struct {
 
 	// Tart VM provider settings
 	Tart TartConfig `mapstructure:"tart"`
+
+	// Orchard submits VM requests to a shared scheduler. It never manages
+	// local Tart resources directly.
+	Orchard OrchardConfig `mapstructure:"orchard"`
 }
 
 // DockerConfig holds Docker-specific provider settings.
@@ -523,6 +527,12 @@ func (ss *ScaleSetConfig) IsTart() bool {
 	return ss.Provider == "tart"
 }
 
+func (ss *ScaleSetConfig) IsOrchard() bool { return ss.Provider == "orchard" }
+
+func (ss *ScaleSetConfig) IsDocker() bool {
+	return ss.Provider == "" || ss.Provider == DefaultProvider
+}
+
 // IsBuildxCleanupEnabled reports whether orphaned buildx builder cleanup is
 // enabled (default false unless explicitly enabled).
 func (ss *ScaleSetConfig) IsBuildxCleanupEnabled() bool {
@@ -707,8 +717,12 @@ func (ss *ScaleSetConfig) ValidationErrors() []error {
 		if ss.Tart.CloneMinFreeGB < 0 {
 			add(fmt.Errorf("tart clone-min-free-gb must be >= 0"))
 		}
+	case "orchard":
+		for _, err := range ss.orchardErrors() {
+			add(err)
+		}
 	default:
-		add(fmt.Errorf("unsupported provider %q (must be %q or \"tart\")", ss.Provider, DefaultProvider))
+		add(fmt.Errorf("unsupported provider %q (must be %q, \"tart\" or \"orchard\")", ss.Provider, DefaultProvider))
 	}
 
 	return problems

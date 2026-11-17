@@ -201,6 +201,10 @@ func credentialEnvironmentRefs(data []byte) ([]string, error) {
 		return nil, err
 	}
 	var refs []string
+	var raw map[string]any
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		return nil, errors.New("invalid service configuration")
+	}
 	for _, table := range tables {
 		if token, ok := table["token"].(string); ok {
 			if name, ok := strings.CutPrefix(token, "env:"); ok {
@@ -210,6 +214,23 @@ func credentialEnvironmentRefs(data []byte) ([]string, error) {
 		if app, ok := table["github-app"].(map[string]any); ok {
 			if name, ok := app["private-key-env"].(string); ok && name != "" {
 				refs = append(refs, name)
+			}
+		}
+		kind, _ := table["provider"].(string)
+		if kind == "" {
+			kind, _ = raw["provider"].(string)
+		}
+		if kind == "orchard" {
+			defaults, _ := raw["orchard"].(map[string]any)
+			overrides, _ := table["orchard"].(map[string]any)
+			for _, key := range []string{"token-env", "password-env"} {
+				value := defaults[key]
+				if override, exists := overrides[key]; exists {
+					value = override
+				}
+				if name, ok := value.(string); ok && name != "" {
+					refs = append(refs, name)
+				}
 			}
 		}
 	}

@@ -49,6 +49,7 @@ type ScaleSetController struct {
 	desiredMu       sync.Mutex
 	desiredRunners  int
 	desiredRevision uint64
+	demandChanged   chan struct{}
 	// pendingCompletions blocks scale-up between JobCompleted and the desired
 	// count callback that follows it in the same listener message. Without the
 	// barrier, fast cleanup could replace a runner using stale demand.
@@ -68,6 +69,7 @@ type ScaleSetController struct {
 	workCtx            context.Context
 	cancelWork         context.CancelFunc
 	workerWG           sync.WaitGroup
+	provisioningWG     sync.WaitGroup
 	cleanupWG          sync.WaitGroup
 	observerWG         sync.WaitGroup
 	stopOnce           sync.Once
@@ -88,6 +90,9 @@ type ScaleSetController struct {
 	registrationMu       sync.Mutex
 	registrations        map[int]*pendingRegistration
 	registrationInFlight bool
+	registrationLookups  map[string]*pendingRegistrationLookup
+	capacityWaiters      int // guarded by runtimeMu
+	recoveryMu           sync.Mutex
 }
 
 // Option configures optional ScaleSetController behavior at construction time.
@@ -138,6 +143,7 @@ func NewScaleSetController(scaleSetID, minRunners, maxRunners int, p provider.In
 		capacity:       privateBroker.Register("standalone", minRunners),
 		reconcile:      make(chan struct{}, 1),
 		retryConfig:    config.DefaultRetry(),
+		demandChanged:  make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -164,6 +170,9 @@ func (s *ScaleSetController) HandleDesiredRunnerCount(ctx context.Context, count
 	s.desiredRevision++
 	s.pendingCompletions = 0
 	s.demandStale = false
+	s.instances.cancelPreparingAboveTarget(min(s.maxRunners, s.minRunners+count))
+	close(s.demandChanged)
+	s.demandChanged = make(chan struct{})
 	s.desiredMu.Unlock()
 	s.signalReconcile()
 	// MessageHandler records this value as desired-runners. Reconciliation is
@@ -246,6 +255,11 @@ func (s *ScaleSetController) reconcileOne() bool {
 		go func() { defer s.cleanupWG.Done(); s.removeRegistration(s.workCtx, id) }()
 		return true
 	}
+	if name, ok := s.claimRegistrationLookup(); ok {
+		s.cleanupWG.Add(1)
+		go func() { defer s.cleanupWG.Done(); s.reconcileRegistrationLookup(s.workCtx, name) }()
+		return true
+	}
 	if name, instanceID, ok := s.instances.claimRemoval(time.Now()); ok {
 		s.cleanupWG.Add(1)
 		go func() {
@@ -286,6 +300,10 @@ func (s *ScaleSetController) reconcileOne() bool {
 		lease.Release()
 		return false
 	}
+	if prepared, ok := s.provider.(provider.PreparedInstanceProvider); ok {
+		s.startPreparedWithLease(prepared, lease)
+		return true
+	}
 	if _, err := s.startInstanceWithLease(s.workCtx, lease); err != nil {
 		if s.workCtx.Err() == nil && !s.draining.Load() {
 			s.logger.Error("Failed to start runner, will retry",
@@ -324,8 +342,15 @@ func (s *ScaleSetController) removeClaimedInstance(ctx context.Context, name, in
 	if err == nil {
 		err = s.provider.RemoveInstance(removeCtx, instanceID)
 	}
+	if err == nil && s.instances.clearRegistrationOnRemoval(name, instanceID) {
+		err = s.recordRegistrationRemoved(removeCtx, name, instanceID)
+	}
 	cancel()
 	if err == nil {
+		_, recordsRegistration := s.provider.(provider.InstanceRegistrationRecorder)
+		if recordsRegistration && s.instances.removalReason(name, instanceID) == reasonExited && !s.instances.registrationCleared(name, instanceID) {
+			s.queuePreparedRegistration(name, instanceID, s.instances.runnerID(name, instanceID))
+		}
 		s.finishRemoval(name, instanceID)
 		return
 	}
@@ -356,14 +381,26 @@ func (s *ScaleSetController) deregister(ctx context.Context, name, instanceID st
 		return false, nil
 	}
 	if runnerID == 0 {
+		if _, ok := s.provider.(provider.InstanceRecovery); ok {
+			var lookupErr error
+			runnerID, lookupErr = s.lookupRunnerID(ctx, name)
+			if lookupErr != nil {
+				return false, lookupErr
+			}
+			if runnerID > 0 {
+				s.instances.setRunnerID(name, instanceID, runnerID)
+			}
+		}
+	}
+	if runnerID == 0 {
 		// Current readiness failures can still hold jobs, even without the JIT
 		// runner ID. Preserve them until work evidence or explicit shutdown.
 		return false, errors.New("cannot safely deregister runner with unknown ID")
 	}
 	err = s.scalesetClient.RemoveRunner(ctx, int64(runnerID))
 	switch {
-	case err == nil, errors.Is(err, scaleset.RunnerNotFoundError):
-		return false, nil
+	case err == nil, errors.Is(err, scaleset.RunnerNotFoundError), errors.Is(err, scaleset.NotFoundError):
+		return false, s.recordRegistrationRemoved(ctx, name, instanceID)
 	case errors.Is(err, scaleset.JobStillRunningError):
 		if !s.instances.restoreBusy(name, instanceID) {
 			return false, nil // the job completed meanwhile
@@ -767,6 +804,7 @@ func (s *ScaleSetController) waitWorker(ctx context.Context) error {
 	go func() {
 		s.workerWG.Wait()
 		// Once the worker has stopped, no new cleanup goroutines can be added.
+		s.provisioningWG.Wait()
 		s.cleanupWG.Wait()
 		s.observerWG.Wait()
 		close(done)

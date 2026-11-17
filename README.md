@@ -11,6 +11,10 @@ Runscaler auto-scales GitHub Actions self-hosted runners as Docker containers or
 
 Runners are **ephemeral** — each container/VM handles exactly one job and is removed upon completion. No Kubernetes required.
 
+The [Orchard provider](docs/orchard.md) submits CI guests to a shared VM
+resource queue, alongside interactive clients, without reserving CI slots or
+keeping idle CI guests. See [the Orchard configuration](config.orchard.example.toml).
+
 **Pre-1.0 stability:** Runscaler is under active development. Minor releases may
 change or remove commands, configuration options, runner images, and cache
 formats. Patch releases aim to preserve compatibility. Read the

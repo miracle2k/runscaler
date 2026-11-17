@@ -60,9 +60,18 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 	scaleSets := cfg.ResolveScaleSets()
 	for _, ss := range scaleSets {
+		if ss.IsOrchard() {
+			// Orchard manages its worker's Tart installations. Only explicit
+			// local Docker/Tart scale sets may opt into local maintenance.
+			dockerSockets = map[string]bool{}
+			tartHomes = map[string]bool{}
+			break
+		}
+	}
+	for _, ss := range scaleSets {
 		if ss.IsTart() {
 			tartHomes[ss.Tart.Home] = true
-		} else {
+		} else if ss.IsDocker() {
 			dockerSockets[ss.Docker.Socket] = true
 		}
 	}
@@ -396,7 +405,7 @@ func doctorSharedVolumes(sockets map[string]bool, scaleSets []config.ScaleSetCon
 		names[socket] = []string{config.DefaultSharedVolumeName}
 	}
 	for _, ss := range scaleSets {
-		if ss.IsTart() || ss.Docker.SharedVolume == "" {
+		if !ss.IsDocker() || ss.Docker.SharedVolume == "" {
 			continue
 		}
 		if name := ss.SharedVolumeName(); !slices.Contains(names[ss.Docker.Socket], name) {

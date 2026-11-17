@@ -31,6 +31,11 @@ func (s *ScaleSetController) recordStartAttempt(started time.Time) startAttempt 
 
 func (s *ScaleSetController) setCapacityWaiting(waiting bool) {
 	s.runtimeMu.Lock()
-	s.runtime.WaitingForCapacity = waiting
+	if waiting {
+		s.capacityWaiters++
+	} else if s.capacityWaiters > 0 {
+		s.capacityWaiters--
+	}
+	s.runtime.WaitingForCapacity = s.capacityWaiters > 0
 	s.runtimeMu.Unlock()
 }

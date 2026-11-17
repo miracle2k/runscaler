@@ -179,6 +179,19 @@ func TestServiceCredentialReferencesUseTOMLNotLineMatching(t *testing.T) {
 	}
 }
 
+func TestServiceOrchardCredentialReferencesIncludeInheritedValues(t *testing.T) {
+	body := []byte("provider='orchard'\n[orchard]\ntoken-env='ORCHARD_TOKEN'\npassword-env='GUEST_PASSWORD'\n[[scaleset]]\nname='first'\n[[scaleset]]\nname='second'\norchard.token-env='SECOND_TOKEN'\n")
+	got, err := credentialEnvironmentRefs(body)
+	if err != nil || !reflect.DeepEqual(got, []string{"GUEST_PASSWORD", "ORCHARD_TOKEN", "SECOND_TOKEN"}) {
+		t.Fatalf("Orchard service references = %q, %v", got, err)
+	}
+	body = []byte("provider='docker'\n[orchard]\ntoken-env='UNUSED'\n")
+	got, err = credentialEnvironmentRefs(body)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("unused Orchard settings required credentials: %v %v", got, err)
+	}
+}
+
 func TestPrepareOwnedDirectoryChangesOnlyTheSelectedDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state")
 	var changed []string

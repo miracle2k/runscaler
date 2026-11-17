@@ -238,13 +238,15 @@ func readServiceConfig(configPath string, required bool) (serviceConfigFacts, er
 	facts.drainTimeout = cfg.DrainTimeout
 	facts.logFile = cfg.LogFile
 	if sets := cfg.ResolveScaleSets(); len(sets) > 0 {
-		facts.provider = "tart"
+		facts.provider = "orchard"
 		for _, ss := range sets {
 			if ss.ScaleSetName != "" {
 				facts.scaleSetNames = append(facts.scaleSetNames, ss.ScaleSetName)
 			}
-			if !ss.IsTart() {
+			if ss.IsDocker() {
 				facts.provider = config.DefaultProvider
+			} else if ss.IsTart() && facts.provider != config.DefaultProvider {
+				facts.provider = "tart"
 			}
 		}
 	}

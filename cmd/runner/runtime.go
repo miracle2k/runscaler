@@ -49,17 +49,16 @@ type tartRuntime struct {
 
 // newScaleSetRuntimes returns one runtime per scale set, in input order, with
 // index set to its position. A Tart scale set carries only the shared Tart
-// host; every other scale set carries the Docker client for its socket and
-// the shared image pull coordinator. logger and capacity are left unset.
-// b.dockerClients must hold a client for every non-Tart scale set's socket; a
-// missing one becomes a nil client.
+// host; Docker scale sets carry their socket client and image pull coordinator.
+// Orchard needs no local backend. logger and capacity are left unset.
+// b.dockerClients must hold a client for each Docker scale set's socket.
 func newScaleSetRuntimes(scaleSets []config.ScaleSetConfig, b runtimeBackends) []*scaleSetRuntime {
 	runtimes := make([]*scaleSetRuntime, len(scaleSets))
 	for i, ss := range scaleSets {
 		rt := &scaleSetRuntime{index: i, config: ss, maxRunners: ss.MaxRunners}
 		if ss.IsTart() {
 			rt.tart = &tartRuntime{host: b.tartHost}
-		} else {
+		} else if ss.IsDocker() {
 			rt.docker = &dockerRuntime{client: b.dockerClients[ss.Docker.Socket], pulls: b.dockerPulls}
 		}
 		runtimes[i] = rt
@@ -82,6 +81,9 @@ type managerDeps struct {
 // For Tart it also starts the warm pool, so call it once, when the controller
 // is about to run.
 func (rt *scaleSetRuntime) newProvider(ctx context.Context, deps managerDeps) provider.InstanceProvider {
+	if rt.config.IsOrchard() {
+		return provider.NewOrchardProvider(rt.config, rt.logger)
+	}
 	if rt.tart != nil {
 		tb := provider.NewTartProviderWithCoordinator(rt.config, rt.logger, rt.tart.host, rt.tart.guest)
 		tb.StartPool(ctx) // starts warm pool if tart-pool-size > 0
