@@ -191,10 +191,14 @@ func generated(c *preparedTestClient) int {
 func TestPreparedJITWaitsForAdmissionAndPreservesQueueAge(t *testing.T) {
 	p, c := &preparedTestProvider{}, &preparedTestClient{}
 	s := newPreparedController(t, 1, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	request := requested(t, p, 1)[0]
 	for range 5 {
-		s.HandleDesiredRunnerCount(context.Background(), 1)
+		if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if generated(c) != 0 {
 		t.Fatal("JIT was generated before shared capacity became available")
@@ -216,9 +220,13 @@ func TestPreparedJITWaitsForAdmissionAndPreservesQueueAge(t *testing.T) {
 func TestPreparedCancellationCleansQueuedRequestWithoutJIT(t *testing.T) {
 	p, c := &preparedTestProvider{}, &preparedTestClient{}
 	s := newPreparedController(t, 1, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	request := requested(t, p, 1)[0]
-	s.HandleDesiredRunnerCount(context.Background(), 0)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return slices.Contains(removed, request.id) }, "canceled request was not deleted")
 	if generated(c) != 0 || s.instances.count() != 0 || s.RuntimeStatus().StartFailures != 0 {
 		t.Fatal("normal cancellation registered a runner, retained capacity or counted as failure")
@@ -235,13 +243,21 @@ func TestPreparedCancellationCleansQueuedRequestWithoutJIT(t *testing.T) {
 func TestPreparedCleanupContinuesWhileAnotherRequestWaits(t *testing.T) {
 	p, c := &preparedTestProvider{}, &preparedTestClient{}
 	s := newPreparedController(t, 2, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 2)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 2); err != nil {
+		t.Fatal(err)
+	}
 	requests := requested(t, p, 2)
 	p.ready(requests[0].id, nil)
 	waitFor(t, func() bool { _, started, _, _, _ := p.snapshot(); return len(started) == 1 }, "first runner did not start")
-	s.HandleJobStarted(context.Background(), &scaleset.JobStarted{RunnerName: requests[0].name})
-	s.HandleJobCompleted(context.Background(), &scaleset.JobCompleted{RunnerName: requests[0].name})
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if err := s.HandleJobStarted(context.Background(), &scaleset.JobStarted{RunnerName: requests[0].name}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.HandleJobCompleted(context.Background(), &scaleset.JobCompleted{RunnerName: requests[0].name}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return slices.Contains(removed, requests[0].id) }, "active-job cleanup was blocked by queued preparation")
 	if generated(c) != 1 || !s.RuntimeStatus().WaitingForCapacity {
 		t.Fatal("waiting request was started or lost its capacity-wait status")
@@ -251,7 +267,9 @@ func TestPreparedCleanupContinuesWhileAnotherRequestWaits(t *testing.T) {
 func TestPreparedDemandDecreaseCancelsNewestRequests(t *testing.T) {
 	p, c := &preparedTestProvider{}, &preparedTestClient{}
 	s := newPreparedController(t, 3, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 3)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 3); err != nil {
+		t.Fatal(err)
+	}
 	requests := requested(t, p, 3)
 	slices.SortFunc(requests, func(a, b preparedRequest) int {
 		if s.instances.attempt(a.name).id < s.instances.attempt(b.name).id {
@@ -259,7 +277,9 @@ func TestPreparedDemandDecreaseCancelsNewestRequests(t *testing.T) {
 		}
 		return 1
 	})
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return len(removed) == 2 }, "excess queued requests were not canceled")
 	_, _, removed, _, _ := p.snapshot()
 	if slices.Contains(removed, requests[0].id) || generated(c) != 0 {
@@ -276,7 +296,9 @@ func TestPreparedAmbiguousStartRetainsGitHubAssignedGuest(t *testing.T) {
 	p := &preparedTestProvider{startErr: errors.New("start response lost")}
 	c := &preparedTestClient{mockScaleset: mockScaleset{removeErr: map[int]error{1: scaleset.JobStillRunningError}}}
 	s := newPreparedController(t, 1, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	request := requested(t, p, 1)[0]
 	p.ready(request.id, nil)
 	waitFor(t, func() bool { phase, _ := s.instances.phase(request.name); return phase == instanceBusy }, "assigned runner was not retained after lost start response")
@@ -284,8 +306,12 @@ func TestPreparedAmbiguousStartRetainsGitHubAssignedGuest(t *testing.T) {
 	if len(removed) != 0 {
 		t.Fatal("a possibly assigned guest was deleted")
 	}
-	s.HandleJobCompleted(context.Background(), &scaleset.JobCompleted{RunnerName: request.name})
-	s.HandleDesiredRunnerCount(context.Background(), 0)
+	if err := s.HandleJobCompleted(context.Background(), &scaleset.JobCompleted{RunnerName: request.name}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return len(removed) == 1 }, "completed ambiguous start was not cleaned")
 }
 
@@ -293,11 +319,15 @@ func TestPreparedLostJITResponseRetainsLateRegistrationTombstone(t *testing.T) {
 	p := &preparedTestProvider{}
 	c := &preparedTestClient{jitErr: errors.New("JIT response lost")}
 	s := newPreparedController(t, 1, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	request := requested(t, p, 1)[0]
 	p.ready(request.id, nil)
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return len(removed) == 1 }, "never-launched guest was not cleaned")
-	s.HandleDesiredRunnerCount(context.Background(), 0)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool {
 		c.mu.Lock()
 		lookedUp := c.lookupCalls > 0
@@ -331,7 +361,9 @@ func TestPreparedIntentFailureNeverRegistersRunner(t *testing.T) {
 	p := &preparedTestProvider{intentErr: errors.New("intent was not durably saved")}
 	c := &preparedTestClient{}
 	s := newPreparedController(t, 1, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	request := requested(t, p, 1)[0]
 	p.ready(request.id, nil)
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return len(removed) == 1 }, "failed intent did not clean the guest")
@@ -345,7 +377,9 @@ func TestPreparedCancellationDuringJITNeverLaunchesRunner(t *testing.T) {
 	p := &preparedTestProvider{}
 	c := &preparedTestClient{jitWait: make(chan string, 1)}
 	s := newPreparedController(t, 1, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	request := requested(t, p, 1)[0]
 	p.ready(request.id, nil)
 	select {
@@ -353,7 +387,9 @@ func TestPreparedCancellationDuringJITNeverLaunchesRunner(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("JIT request did not start")
 	}
-	s.HandleDesiredRunnerCount(context.Background(), 0)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return len(removed) == 1 }, "JIT cancellation did not clean the guest")
 	_, started, _, _, _ := p.snapshot()
 	if len(started) != 0 || s.RuntimeStatus().StartFailures != 0 {
@@ -377,9 +413,15 @@ func TestPreparedRecoveryKeepsBusyGuestAndCleansUnlaunchedRequest(t *testing.T) 
 	if slices.Contains(removed, "active") {
 		t.Fatal("busy recovered runner was removed")
 	}
-	s.HandleDesiredRunnerCount(context.Background(), 1)
-	s.HandleJobCompleted(context.Background(), &scaleset.JobCompleted{RunnerName: "runner-active"})
-	s.HandleDesiredRunnerCount(context.Background(), 0)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.HandleJobCompleted(context.Background(), &scaleset.JobCompleted{RunnerName: "runner-active"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return slices.Contains(removed, "active") }, "recovered completed job was not cleaned")
 }
 
@@ -405,7 +447,9 @@ func TestPreparedRecoveryRejectsForeignRunnerIdentity(t *testing.T) {
 func TestPreparedFailedBootCleansRequestWithoutJIT(t *testing.T) {
 	p, c := &preparedTestProvider{}, &preparedTestClient{}
 	s := newPreparedController(t, 1, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	request := requested(t, p, 1)[0]
 	p.ready(request.id, errors.New("guest boot failed"))
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return len(removed) == 1 }, "failed boot retained its request")
@@ -418,7 +462,9 @@ func TestPreparedPartialRequestFailureCleansOwnedHandle(t *testing.T) {
 	p := &preparedTestProvider{requestErr: errors.New("create response lost")}
 	c := &preparedTestClient{}
 	s := newPreparedController(t, 1, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	request := requested(t, p, 1)[0]
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return slices.Contains(removed, request.id) }, "partial request error discarded its cleanup handle")
 	if generated(c) != 0 {
@@ -430,7 +476,9 @@ func TestPreparedRequestFailureBeforeOwnershipReleasesLease(t *testing.T) {
 	p := &preparedTestProvider{requestErr: errors.New("request not sent"), noRequestID: true}
 	c := &preparedTestClient{}
 	s := newPreparedController(t, 1, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	requested(t, p, 1)
 	waitFor(t, func() bool { return s.instances.count() == 0 }, "unowned request failure retained local state")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -445,7 +493,9 @@ func TestPreparedRequestFailureBeforeOwnershipReleasesLease(t *testing.T) {
 func TestPreparedDrainCancelsQueuedAdmission(t *testing.T) {
 	p, c := &preparedTestProvider{}, &preparedTestClient{}
 	s := newPreparedController(t, 1, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	request := requested(t, p, 1)[0]
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -461,11 +511,15 @@ func TestPreparedDrainCancelsQueuedAdmission(t *testing.T) {
 func TestPreparedAdmissionWaitsForFreshDemandAfterCompletion(t *testing.T) {
 	p, c := &preparedTestProvider{}, &preparedTestClient{}
 	s := newPreparedController(t, 2, p, c)
-	s.HandleDesiredRunnerCount(context.Background(), 2)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 2); err != nil {
+		t.Fatal(err)
+	}
 	requests := requested(t, p, 2)
 	p.ready(requests[0].id, nil)
 	waitFor(t, func() bool { _, started, _, _, _ := p.snapshot(); return len(started) == 1 }, "first runner did not start")
-	s.HandleJobCompleted(context.Background(), &scaleset.JobCompleted{RunnerName: requests[0].name})
+	if err := s.HandleJobCompleted(context.Background(), &scaleset.JobCompleted{RunnerName: requests[0].name}); err != nil {
+		t.Fatal(err)
+	}
 	p.ready(requests[1].id, nil)
 	waitFor(t, func() bool {
 		_, _, _, events, _ := p.snapshot()
@@ -483,7 +537,9 @@ func TestPreparedAdmissionWaitsForFreshDemandAfterCompletion(t *testing.T) {
 	if generated(c) != 1 {
 		t.Fatal("admission generated JIT from stale pre-completion demand")
 	}
-	s.HandleDesiredRunnerCount(context.Background(), 0)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return len(removed) == 2 }, "fresh lower demand did not clean the admitted request")
 }
 
@@ -528,7 +584,9 @@ func TestPreparedAmbiguousExitCannotBypassBusyDeregistration(t *testing.T) {
 	watch := &watchedPreparedTestProvider{preparedTestProvider: p, exited: make(chan struct{})}
 	c := &preparedTestClient{mockScaleset: mockScaleset{removeErr: map[int]error{1: scaleset.JobStillRunningError}}}
 	s := newPreparedController(t, 1, watch, c)
-	s.HandleDesiredRunnerCount(context.Background(), 1)
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
 	request := requested(t, p, 1)[0]
 	p.ready(request.id, nil)
 	waitFor(t, func() bool { phase, _ := s.instances.phase(request.name); return phase == instanceBusy }, "ambiguous launch did not retain assigned work")
@@ -541,8 +599,12 @@ func TestPreparedAmbiguousExitCannotBypassBusyDeregistration(t *testing.T) {
 	if len(removed) != 0 {
 		t.Fatal("ambiguous process-missing evidence deleted a guest that GitHub still holds")
 	}
-	s.HandleJobCompleted(context.Background(), &scaleset.JobCompleted{RunnerName: request.name})
-	s.HandleDesiredRunnerCount(context.Background(), 0)
+	if err := s.HandleJobCompleted(context.Background(), &scaleset.JobCompleted{RunnerName: request.name}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.HandleDesiredRunnerCount(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, func() bool { _, _, removed, _, _ := p.snapshot(); return len(removed) == 1 }, "completed retained job was not cleaned")
 }
 

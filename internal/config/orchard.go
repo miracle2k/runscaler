@@ -59,7 +59,7 @@ func (ss ScaleSetConfig) orchardErrors() []error {
 	} else if u.Scheme != "https" {
 		host := u.Hostname()
 		ip := net.ParseIP(host)
-		if u.Scheme != "http" || !(host == "localhost" || ip != nil && ip.IsLoopback()) {
+		if u.Scheme != "http" || host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 			add("url requires HTTPS except on loopback")
 		}
 	}

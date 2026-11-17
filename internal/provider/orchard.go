@@ -36,11 +36,11 @@ func NewOrchardProvider(ss config.ScaleSetConfig, logger *slog.Logger) *OrchardP
 	password := os.Getenv(ss.Orchard.PasswordEnv)
 	p.secrets = []string{token, password}
 	if token == "" {
-		p.initErr = errors.New("Orchard token environment variable is empty")
+		p.initErr = errors.New("orchard token environment variable is empty")
 		return p
 	}
 	if ss.Orchard.PasswordEnv != "" && password == "" {
-		p.initErr = errors.New("Orchard guest password environment variable is empty")
+		p.initErr = errors.New("orchard guest password environment variable is empty")
 		return p
 	}
 	p.api, p.initErr = newOrchardHTTPClient(ss.Orchard.URL, ss.Orchard.ServiceAccount, token)
@@ -80,7 +80,7 @@ func (p *OrchardProvider) RequestInstance(ctx context.Context, name string) (str
 	}
 	r, _ := p.ledger.get(id)
 	if r.Name != name || r.InstanceRemoved {
-		return id, errors.New("Orchard request identity was already retired")
+		return id, errors.New("orchard request identity was already retired")
 	}
 	vm, err := p.api.Get(ctx, id)
 	if orchardNotFound(err) && r.UID == "" {
@@ -112,10 +112,10 @@ func (p *OrchardProvider) RequestInstance(ctx context.Context, name string) (str
 func (p *OrchardProvider) acceptVM(id string, vm orchardVM) error {
 	r, ok := p.ledger.get(id)
 	if !ok || vm.Name != id || vm.UID == "" || r.UID != "" && r.UID != vm.UID {
-		return errors.New("Orchard VM ownership identity mismatch; no action taken")
+		return errors.New("orchard VM ownership identity mismatch; no action taken")
 	}
 	if r.UID == "" && (vm.Image != r.VM.Image || vm.CPU != r.VM.CPU || vm.Memory != r.VM.Memory || !reflect.DeepEqual(vm.Resources, r.VM.Resources) || !sameOrchardLabels(vm.Labels, r.VM.Labels)) {
-		return errors.New("Orchard VM specification differs from saved request; no action taken")
+		return errors.New("orchard VM specification differs from saved request; no action taken")
 	}
 	if r.UID == "" || r.CreateUncertain && !r.InstanceRemoved {
 		return p.ledger.change(id, func(r *orchardRecord) error {
@@ -146,7 +146,7 @@ func (p *OrchardProvider) ownedVM(ctx context.Context, id string) (orchardVM, er
 		return orchardVM{}, err
 	}
 	if _, ok := p.ledger.get(id); !ok {
-		return orchardVM{}, errors.New("Orchard instance is not in this manager's ledger")
+		return orchardVM{}, errors.New("orchard instance is not in this manager's ledger")
 	}
 	vm, err := p.api.Get(ctx, id)
 	if err == nil {
@@ -164,7 +164,7 @@ func (p *OrchardProvider) WaitPrepared(ctx context.Context, id string) error {
 		}
 		switch vm.Status {
 		case "failed":
-			return errors.New("Orchard could not prepare the VM")
+			return errors.New("orchard could not prepare the VM")
 		case "running":
 			if bootDeadline.IsZero() {
 				bootDeadline = time.Now().Add(p.config.Orchard.EffectiveReadyTimeout())
@@ -191,7 +191,7 @@ func (p *OrchardProvider) StartPreparedInstance(ctx context.Context, name, id, j
 	}
 	if err := p.ledger.change(id, func(r *orchardRecord) error {
 		if r.Name != name || !r.JITRequested || r.JITRemoved || jit == "" {
-			return errors.New("Orchard runner has no matching JIT intent")
+			return errors.New("orchard runner has no matching JIT intent")
 		}
 		r.LaunchAttempted = true
 		return nil
@@ -230,7 +230,7 @@ func (p *OrchardProvider) RecordJITRequested(ctx context.Context, name, id strin
 	}
 	return p.ledger.change(id, func(r *orchardRecord) error {
 		if r.Name != name || r.VMName != id {
-			return errors.New("Orchard JIT intent has no owned request")
+			return errors.New("orchard JIT intent has no owned request")
 		}
 		r.JITRequested = true
 		r.JITRemoved = false
@@ -244,7 +244,7 @@ func (p *OrchardProvider) RecordJITRunner(ctx context.Context, name, id string, 
 	}
 	return p.ledger.change(id, func(r *orchardRecord) error {
 		if r.Name != name || !r.JITRequested || runnerID <= 0 {
-			return errors.New("Orchard JIT registration identity mismatch")
+			return errors.New("orchard JIT registration identity mismatch")
 		}
 		r.RunnerID = runnerID
 		return nil
@@ -260,7 +260,7 @@ func (p *OrchardProvider) RecordJITRemoved(ctx context.Context, name, id string)
 	}
 	return p.ledger.change(id, func(r *orchardRecord) error {
 		if r.Name != name {
-			return errors.New("Orchard removed registration identity mismatch")
+			return errors.New("orchard removed registration identity mismatch")
 		}
 		r.JITRemoved = true
 		return nil
@@ -330,10 +330,10 @@ func (p *OrchardProvider) RecoverInstances(ctx context.Context) ([]RecoveredInst
 func CheckOrchardConnection(ctx context.Context, ss config.ScaleSetConfig) error {
 	token := os.Getenv(ss.Orchard.TokenEnv)
 	if token == "" {
-		return errors.New("Orchard token environment variable is empty")
+		return errors.New("orchard token environment variable is empty")
 	}
 	if ss.Orchard.PasswordEnv != "" && os.Getenv(ss.Orchard.PasswordEnv) == "" {
-		return errors.New("Orchard guest password environment variable is empty")
+		return errors.New("orchard guest password environment variable is empty")
 	}
 	api, err := newOrchardHTTPClient(ss.Orchard.URL, ss.Orchard.ServiceAccount, token)
 	if err != nil {
@@ -441,8 +441,9 @@ func (p *OrchardProvider) pause(ctx context.Context) error {
 	}
 }
 
-// Cleanup is explicit and ledger-backed. Never sweep other Orchard clients
-// or terminate a detached busy guest merely because its controller exits.
+// Shutdown stops background cleanup. Resource cleanup stays explicit and
+// ledger-backed; stopping the provider never sweeps another client's VM or
+// terminates a detached busy guest.
 func (p *OrchardProvider) Shutdown(ctx context.Context) {
 	p.cleanupMu.Lock()
 	p.closed = true
