@@ -19,6 +19,12 @@ A custom state directory needs operator-provided ownership and systemd write
 allowances. `runner validate` checks controller authentication and read access
 without creating a VM or persistent provider state.
 
+Until Orchard support is included in an upstream release, build this fork from
+a pinned revision. The startup update check is advisory, but `runner update`
+and the upstream installer download upstream binaries and can remove this
+provider. `disable-update` controls the guest's official GitHub runner update,
+not controller updates.
+
 Set `min-runners = 0`. The provider creates a request only for assigned job
 demand and always removes that CI guest after the job. It has no idle or warm
 CI pool and does not reuse CI disks. Interactive clients can keep and reuse
@@ -102,6 +108,11 @@ It resolves ambiguous JIT requests through GitHub's exact runner-name lookup.
 It retains registration tombstones until cleanup is confirmed, and it never
 deletes another client's guest. A corrupt ledger stops recovery; restore the
 saved state instead of deleting files or running a broad resource sweep.
+
+After an abrupt controller exit, GitHub can temporarily retain the previous
+message session. The listener retries with bounded backoff until the server
+accepts a new session. Existing jobs keep running during this delay; do not
+delete or recreate a scale set to force a takeover.
 
 An ambiguous VM-create response also retains an exact-name tombstone. A
 missing first read does not discard that intent: the provider checks for a
